@@ -1,0 +1,166 @@
+---
+title: "Coursera Practical Machine Learning Project"
+author: "Jun Zhang"
+date: "March 5, 2020"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+library(caret)
+library(tidyverse)
+library(glmnet)
+library(rpart.plot)
+```
+
+
+## Data Preprocessing
+
+First, we load the data into R and check the shapes of the datasets. 
+```{r}
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+
+dim(train)
+dim(test)
+```
+The training data has 19622 observations and 160 variables, whereas the testing set has 20 observations and 160 variables.
+
+```{r}
+for(i in 1:ncol(train)){
+    if(colnames(train)[i] != colnames(test)[i]){
+        print(colnames(train)[i])
+        print(colnames(test)[i])
+    }
+}
+```
+Then, we can print out the unique variables in the two sets. We can notice that the training set has a variable name *classe*, which does not appear in the testing set. Similarly, the variable *problem_id* appears in the testing set but not the training set. **The goal of this project is to predict the *classe* in the testing set, and the following code shows that there are five classes in total.**
+
+```{r}
+table(train$classe)
+```
+
+
+Before diving into the analysis, we first need to take a look at the dataset, and we will find out that there are quite a lot of missing values or blanks.
+
+```{r}
+number <- as.numeric()
+
+#Change all blanks to NAs
+train[train==""] <- NA
+
+for(i in 1:ncol(train)){
+    #If there are no missings in a column
+    if(is.na(as.numeric(table((is.na(train[,i])))["TRUE"]))==T){
+        number[i] <- 0
+    }else{
+        #Record the number of missings in a column
+        number[i] <- as.numeric(table((is.na(train[,i])))["TRUE"])
+    }
+}
+number
+```
+The above function detects the number of missing values in each column. It's obvious to see that many columns have over 19000 missings with only 19622 total observations. Then, we can delete those variables since they provide only a little information.
+
+```{r}
+which(number != 0)
+colRemove <- which(number != 0)
+```
+
+```{r}
+trainNew <- train[, -c(1, 3:5, colRemove)]
+testNew <- test[, -c(1, 3:5, colRemove)]
+```
+Since we have removed those columns in the training set, we need to remove them in the testing set. Moreover, since column X indicates the index in the dataset, we can just remove it. Also, by roughly looking at the dataset, the columns from three to five do not provide relevant information. So, we might as well remove them for now. 
+
+
+
+## Train/Test Split
+
+Before modeling, we need to make ourselves a local validation set to test the performance of different statistical models. We can split the training set into a new training set and a new validation set with a 9/1 ratio.
+
+```{r}
+set.seed(123)
+split <- sample(1:nrow(trainNew), .9*nrow(trainNew))
+NewTrain <- trainNew[split,]
+Validation <- trainNew[-split,]
+```
+
+
+
+## Statistical Models
+
+We begin with the simplest classification method: classification trees. To evaluate the accuracy of different models, we will use 10-fold cross-validation.
+```{r}
+#CV with 10 folds
+Control <- trainControl(method="cv", number=10)
+
+#Classification Tree
+set.seed(123)
+CT.fit <- train(classe~., data=NewTrain, method="rpart", trControl=Control)
+
+#Prediction
+CT.pred <- predict(CT.fit, newdata=Validation[,-ncol(Validation)])
+
+#Results
+confusionMatrix(Validation$classe, CT.pred)$table
+confusionMatrix(Validation$classe, CT.pred)$overall[1]
+```
+
+From the result above, we can see that the classification model is about 49.9% accurate, which is not a good model to consider. And below is the graph of the classification tree.
+
+```{r}
+rpart.plot(CT.fit$finalModel)
+```
+
+I also tried the method of k-nearest neighbors (KNN). The accuracy at the end is about 96.8%, which is pretty good. And from the graph below, it suggests that when k=5 (5 neighbors), we will have the highest accuracy.
+
+```{r}
+#KNN
+set.seed(123)
+KNN.fit <- train(classe~., data=NewTrain, method="knn", trControl=Control, preProcess=c("center","scale"))
+KNN.pred <- predict(KNN.fit, newdata=Validation[,-ncol(Validation)])
+plot(KNN.fit)
+```
+
+```{r}
+confusionMatrix(Validation$classe, KNN.pred)$table
+confusionMatrix(Validation$classe, KNN.pred)$overall[1]
+```
+
+Below is the method of quadratic discriminant analysis, and that gives me an accuracy of 90.4%. The result is pretty decent but not as good as KNN.
+
+```{r}
+#QDA
+set.seed(123)
+QDA.fit <- train(classe~., data=NewTrain, method="qda", trControl=Control, verbose=FALSE)
+QDA.pred <- predict(QDA.fit, newdata=Validation[,-ncol(Validation)])
+
+confusionMatrix(Validation$classe, QDA.pred)$table
+confusionMatrix(Validation$classe, QDA.pred)$overall[1]
+```
+
+
+I also tried a random forest; however, I wasn't able to obtain the result due to a long runtime. Since the method of KNN provides a prediction with 96.8% accuracy, I will use it as my final model.
+
+
+## Prediction on The Test Data
+
+Using the KNN model we just built, the predicted classes for the test data are shown below. 
+```{r}
+predict(KNN.fit, newdata=test[,-ncol(test)])
+```
+
+
+## Reference
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
